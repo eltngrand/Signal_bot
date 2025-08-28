@@ -1,7 +1,6 @@
 import telebot
 import yfinance as yf
 import pandas_ta as ta
-import schedule
 import time
 from datetime import datetime
 from threading import Thread
@@ -18,7 +17,32 @@ symbols = ["BTC-USD", "GC=F", "EURUSD=X"]  # GC=F = Gold Futures
 timeframes = ["1m", "5m"]
 last_signal = {}
 
+LOG_FILE = "bot_log.txt"  # log fayl nomi
+
+# -----------------------------
+# Log yozish funksiyasi
+# -----------------------------
+def log_write(text):
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    try:
+        with open(LOG_FILE, "a") as f:
+            f.write(f"{timestamp} - {text}\n")
+    except:
+        pass
+
+# -----------------------------
+# Terminalda log chiqarish
+# -----------------------------
+def safe_print(text):
+    try:
+        print(text)
+        log_write(text)
+    except:
+        pass
+
+# -----------------------------
 # Signal olish funksiyasi
+# -----------------------------
 def get_signal(symbol, interval):
     try:
         df = yf.download(symbol, period="5d", interval=interval, auto_adjust=True, progress=False)
@@ -37,16 +61,18 @@ def get_signal(symbol, interval):
     except Exception as e:
         return "ERROR", None, None
 
-# Signal yuborish funksiyasi (chatga)
+# -----------------------------
+# Signalni chatga yuborish
+# -----------------------------
 def send_signal_chat(sym, tf):
     key = f"{sym}_{tf}"
     sig, price, rsi = get_signal(sym, tf)
 
     if sig == "ERROR":
-        safe_print(f"{sym} ({tf}) ma'lumot topilmadi yoki xato yuz berdi.")
-        # Telegramga admin chatga xatolik yuborish
+        msg = f"⚠️ {sym} ({tf}) ma'lumot topilmadi yoki xato yuz berdi."
+        safe_print(msg)
         try:
-            bot.send_message(ADMIN_CHAT_ID, f"⚠️ {sym} ({tf}) ma'lumot topilmadi yoki xato yuz berdi.")
+            bot.send_message(ADMIN_CHAT_ID, msg)
         except:
             pass
         return
@@ -64,18 +90,54 @@ def send_signal_chat(sym, tf):
             except Exception as e:
                 safe_print(f"{chat_id} ga yuborishda xato: {e}")
         last_signal[key] = sig
+        log_write(f"{sym} ({tf}) signal yuborildi: {sig}")
 
-# Terminalda loglarni xavfsiz chiqarish
-def safe_print(text):
-    try:
-        print(text)
-    except:
-        pass
-
+# -----------------------------
 # Parallel signal yuborish
+# -----------------------------
 def send_signals():
     threads = []
     for sym in symbols:
         for tf in timeframes:
             t = Thread(target=send_signal_chat, args=(sym, tf))
             t.start()
+            threads.append(t)
+    for t in threads:
+        t.join()
+
+# -----------------------------
+# Heartbeat: bot ishga tushganini xabar qiladi
+# -----------------------------
+def heartbeat():
+    msg = f"💓 Bot ishga tushgan / ish holati: {datetime.now().strftime('%H:%M:%S')}"
+    safe_print(msg)
+    try:
+        bot.send_message(ADMIN_CHAT_ID, msg)
+    except:
+        pass
+
+# -----------------------------
+# Asosiy loop
+# -----------------------------
+safe_print("🚀 Signal Bot ishga tushdi...")
+
+heartbeat_interval = 10 * 60  # 10 daqiqa
+last_heartbeat = time.time()
+
+while True:
+    try:
+        send_signals()
+        
+        # Heartbeat tekshiruvi
+        if time.time() - last_heartbeat >= heartbeat_interval:
+            heartbeat()
+            last_heartbeat = time.time()
+        
+        time.sleep(30)  # har 30 sekund signal tekshirish
+    except Exception as e:
+        safe_print(f"❌ Botda xato: {e}")
+        try:
+            bot.send_message(ADMIN_CHAT_ID, f"❌ Botda xato: {e}")
+        except:
+            pass
+        time.sleep(5)
